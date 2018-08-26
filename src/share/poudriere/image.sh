@@ -2,6 +2,7 @@
 # 
 # Copyright (c) 2015 Baptiste Daroussin <bapt@FreeBSD.org>
 # All rights reserved.
+# Copyright (c) 2018 Allan Jude <allanjude@FreeBSD.org>
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -44,9 +45,10 @@ Parameters:
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
-                       embedded
+                       embedded, zfssend, zfssend+be
     -X excludefile  -- File containing the list in cpdup format
     -z set          -- Set
+    -Z datasetfile  -- List of ZFS datasets to create
 EOF
 	exit 1
 }
@@ -108,10 +110,69 @@ mkminiroot() {
 	gzip -9 ${OUTPUTDIR}/${IMAGENAME}-miniroot
 }
 
+create_zfs_be_datasets() {
+	local OPT OPTSTR
+
+	if [ -n "$1" ]; then
+		. $1
+	fi
+	: ${ZFS_DATASETS:="
+		# DATASET	OPTIONS (space separated)
+
+		# Boot Environment [BE] root and default boot dataset
+		/$ZFS_BEROOT_NAME			mountpoint=none
+		/$ZFS_BEROOT_NAME/$ZFS_BOOTFS_NAME	mountpoint=/
+
+		# Compress /tmp, allow exec but not setuid
+		/tmp		mountpoint=/tmp exec=on setuid=off
+
+		# Don't mount /usr so that 'base' files go to the BEROOT
+		/usr		mountpoint=/usr canmount=off
+
+		# Home directories separated so they are common to all BEs
+		/usr/home	# NB: /home is a symlink to /usr/home
+
+		# Ports tree
+		/usr/ports	setuid=off
+
+		# Source tree (compressed)
+		/usr/src
+
+		# Create /var and friends
+		/var		mountpoint=/var canmount=off
+		/var/audit	exec=off setuid=off
+		/var/crash	exec=off setuid=off
+		/var/log	exec=off setuid=off
+		/var/mail	atime=on
+		/var/tmp	setuid=off
+	"}
+
+	msg "Creating ZFS Datasets"
+	echo "$ZFS_DATASETS" | while read dataset options; do
+		# Skip blank lines and comments
+		case "$dataset" in "#"*|"") continue; esac
+		# Remove potential inline comments in options
+		options="${options%%#*}"
+		# Replace tabs with spaces
+		str_replaceall "$options" "	" " " options
+		# Reduce contiguous runs of space to one single space
+		oldoptions=
+		while [ "$oldoptions" != "$options" ]; do
+			oldoptions="$options"
+			str_replaceall "$options" "  " " " options
+		done
+		# Replace both commas and spaces with ` -o '
+		str_replaceall "$options" "[ ,]" " -o " options
+		# Create the dataset with desired options
+		zfs create ${options:+-o $options} "$zroot$dataset" ||
+		    err 1 "Dataset creation failed"
+	done
+}
+
 . ${SCRIPTPREFIX}/common.sh
 HOSTNAME=poudriere-image
 
-while getopts "c:f:h:j:m:n:o:p:s:t:X:z:" FLAG; do
+while getopts "c:f:h:j:m:n:o:p:s:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -156,7 +217,7 @@ while getopts "c:f:h:j:m:n:o:p:s:t:X:z:" FLAG; do
 			case ${MEDIATYPE} in
 			iso|iso+mfs|iso+zmfs|usb|usb+mfs|usb+zmfs) ;;
 			rawdisk|zrawdisk|tar|firmware|rawfirmware) ;;
-			embedded) ;;
+			embedded|zfssend|zfssend+be) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
 			;;
@@ -167,6 +228,14 @@ while getopts "c:f:h:j:m:n:o:p:s:t:X:z:" FLAG; do
 		z)
 			[ -n "${OPTARG}" ] || err 1 "Empty set name"
 			SETNAME="${OPTARG}"
+			;;
+		Z)
+			# If this is a relative path, add in ${PWD} as
+			# a cd / was done.
+			[ "${OPTARG#/}" = "${OPTARG}" ] && \
+			    OPTARG="${SAVED_PWD}/${OPTARG}"
+			[ -f "${OPTARG}" ] || err 1 "No such ZFS dataset list: ${OPTARG}"
+			DATASETLIST="${OPTARG}"
 			;;
 		*)
 			echo "Unknown flag '${FLAG}'"
@@ -181,6 +250,9 @@ post_getopts
 
 : ${MEDIATYPE:=none}
 : ${PTNAME:=default}
+: ${ZFS_SEND_FLAGS:=-Re}
+: ${ZFS_BEROOT_NAME:=ROOT}
+: ${ZFS_BOOTFS_NAME:=default}
 
 [ -n "${JAILNAME}" ] || usage
 
@@ -213,7 +285,7 @@ jail_exists ${JAILNAME} || err 1 "The jail ${JAILNAME} does not exist"
 _jget arch ${JAILNAME} arch
 get_host_arch host_arch
 case "${MEDIATYPE}" in
-usb|*firmware|rawdisk|embedded)
+usb|*firmware|rawdisk|embedded|zfssend*)
 	[ -n "${IMAGESIZE}" ] || err 1 "Please specify the imagesize"
 	_jget mnt ${JAILNAME} mnt
 	test -f ${mnt}/boot/kernel/kernel || err 1 "The ${MEDIATYPE} media type requires a jail with a kernel"
@@ -299,6 +371,19 @@ zrawdisk)
 		-o exec=off -o setuid=off \
 		${zroot}/var/cache
 	zfs create -o mountpoint=/var/empty ${zroot}/var/empty
+	;;
+zfssend*)
+	truncate -s ${IMAGESIZE} ${WRKDIR}/raw.img
+	md=$(/sbin/mdconfig ${WRKDIR}/raw.img)
+	zroot=${IMAGENAME}root
+	msg "Creating temporary ZFS pool"
+	zpool create \
+		-O mountpoint=/${zroot} \
+		-O compression=on \
+		-O atime=off \
+		-R ${WRKDIR}/world ${zroot} /dev/${md}
+	create_zfs_be_datasets ${DATASETLIST}
+	chmod 1777 ${WRKDIR}/world/tmp ${WRKDIR}/world/var/tmp
 	;;
 esac
 
@@ -463,6 +548,11 @@ zrawdisk)
 	vfs.root.mountfrom="zfs:${zroot}/ROOT/default"
 	EOF
 	;;
+zfssend*)
+	cat >> ${WRKDIR}/world/boot/loader.conf <<-EOF
+	zfs_load="YES"
+	EOF
+	;;
 tar)
 	if [ -n "${MINIROOT}" ]; then
 		mkminiroot
@@ -551,6 +641,36 @@ zrawdisk)
 	/sbin/mdconfig -d -u ${md#md}
 	md=
 	mv ${WRKDIR}/raw.img ${OUTPUTDIR}/${FINALIMAGE}
+	;;
+zfssend)
+	FINALIMAGE=${IMAGENAME}.zfs
+	zpool set bootfs=${zroot}/ROOT/default ${zroot}
+	zpool set autoexpand=on ${zroot}
+	zfs set canmount=noauto ${zroot}/ROOT/default
+	msg "Creating snapshot(s) for replication"
+	zfs snapshot -r ${zroot}@${IMAGENAME}
+	msg "Creating replication stream"
+	zfs send ${ZFS_SEND_FLAGS} ${zroot}@${IMAGENAME} > ${OUTPUTDIR}/${FINALIMAGE} ||
+	    err 1 "Failed to save ZFS replication stream"
+	zpool export ${zroot}
+	zroot=
+	/sbin/mdconfig -d -u ${md#md}
+	md=
+	;;
+zfssend+be)
+	FINALIMAGE=${IMAGENAME}.zfs
+	zpool set bootfs=${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME} ${zroot}
+	zpool set autoexpand=on ${zroot}
+	zfs set canmount=noauto ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}
+	msg "Creating snapshot(s) for replication"
+	zfs snapshot -r ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}
+	msg "Creating replication stream"
+	zfs send ${ZFS_SEND_FLAGS} ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME} > ${OUTPUTDIR}/${FINALIMAGE} ||
+	    err 1 "Failed to save ZFS replication stream"
+	zpool export ${zroot}
+	zroot=
+	/sbin/mdconfig -d -u ${md#md}
+	md=
 	;;
 esac
 
