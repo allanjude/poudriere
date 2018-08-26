@@ -42,6 +42,7 @@ Parameters:
     -n imagename    -- The name of the generated image
     -o outputdir    -- Image destination directory
     -p portstree    -- Ports tree
+    -R flags        -- ZFS Replication Flags
     -s size         -- Set the image size
     -S snapshotname -- Snapshot name
     -t type         -- Type of image can be one of (default iso+zmfs):
@@ -194,7 +195,7 @@ create_zfs_be_datasets() {
 . ${SCRIPTPREFIX}/common.sh
 HOSTNAME=poudriere-image
 
-while getopts "c:f:h:i:j:m:n:o:p:s:S:t:X:z:Z:" FLAG; do
+while getopts "c:f:h:i:j:m:n:o:p:R:s:S:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -233,6 +234,9 @@ while getopts "c:f:h:i:j:m:n:o:p:s:S:t:X:z:Z:" FLAG; do
 			;;
 		p)
 			PTNAME=${OPTARG}
+			;;
+		R)
+			ZFS_SEND_FLAGS="-${OPTARG}"
 			;;
 		s)
 			IMAGESIZE="${OPTARG}"
@@ -832,30 +836,19 @@ zsnapshot)
 	ln -s ${FINALIMAGE}-${SNAPSHOT_NAME}.manifest.json ${WRKDIR}/${FINALIMAGE}-latest.manifest.json
 	mv ${WRKDIR}/${FINALIMAGE}-latest.manifest.json ${OUTPUTDIR}/${FINALIMAGE}-latest.manifest.json
 	;;
-zfssend)
+zfssend*)
 	FINALIMAGE=${IMAGENAME}.zfs
 	zpool set bootfs=${zroot}/ROOT/default ${zroot}
 	zpool set autoexpand=on ${zroot}
 	zfs set canmount=noauto ${zroot}/ROOT/default
+	SNAPSPEC="${zroot}@${IMAGENAME}"
+	case "${MEDIATYPE}" in
+	zfssend+be) SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}" ;;
+	esac
 	msg "Creating snapshot(s) for replication"
-	zfs snapshot -r ${zroot}@${IMAGENAME}
+	zfs snapshot -r $SNAPSPEC
 	msg "Creating replication stream"
-	zfs send ${ZFS_SEND_FLAGS} ${zroot}@${IMAGENAME} > ${OUTPUTDIR}/${FINALIMAGE} ||
-	    err 1 "Failed to save ZFS replication stream"
-	zpool export ${zroot}
-	zroot=
-	/sbin/mdconfig -d -u ${md#md}
-	md=
-	;;
-zfssend+be)
-	FINALIMAGE=${IMAGENAME}.zfs
-	zpool set bootfs=${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME} ${zroot}
-	zpool set autoexpand=on ${zroot}
-	zfs set canmount=noauto ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}
-	msg "Creating snapshot(s) for replication"
-	zfs snapshot -r ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}
-	msg "Creating replication stream"
-	zfs send ${ZFS_SEND_FLAGS} ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME} > ${OUTPUTDIR}/${FINALIMAGE} ||
+	zfs send ${ZFS_SEND_FLAGS} $SNAPSPEC > ${OUTPUTDIR}/${FINALIMAGE} ||
 	    err 1 "Failed to save ZFS replication stream"
 	zpool export ${zroot}
 	zroot=
