@@ -382,7 +382,8 @@ zfssend*)
 	zroot=${IMAGENAME}root
 	msg "Creating temporary ZFS pool"
 	zpool create \
-		-O mountpoint=/${zroot} \
+		-O mountpoint=/ \
+		-O canmount=noauto \
 		-O compression=on \
 		-O atime=off \
 		-R ${WRKDIR}/world ${zroot} /dev/${md}
@@ -406,7 +407,7 @@ cap_mkdb ${WRKDIR}/world/etc/login.conf
 
 # Set hostname
 if [ -n "${HOSTNAME}" ]; then
-	echo "hostname=${HOSTNAME}" >> ${WRKDIR}/world/etc/rc.conf
+	chroot ${WRKDIR}/world sh -c "echo \"hostname=${HOSTNAME}\" >> /etc/rc.conf"
 fi
 
 # install packages if any is needed
@@ -648,9 +649,9 @@ zrawdisk)
 	;;
 zfssend*)
 	FINALIMAGE=${IMAGENAME}.zfs
-	zpool set bootfs=${zroot}/ROOT/default ${zroot}
+	zpool set bootfs=${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME} ${zroot}
 	zpool set autoexpand=on ${zroot}
-	zfs set canmount=noauto ${zroot}/ROOT/default
+	zfs set canmount=noauto ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}
 	SNAPSPEC="${zroot}@${IMAGENAME}"
 	case "${MEDIATYPE}" in
 	zfssend+be) SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}" ;;
