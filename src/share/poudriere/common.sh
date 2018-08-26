@@ -7658,6 +7658,35 @@ calculate_ospart_size() {
 	msg "OS Partiton size: ${OS_SIZE}m"
 }
 
+
+# Stolen from bsdconfig
+# str_replaceall $string $find $replace [$var_to_set]
+#
+# Replace all occurrences of $find in $string with $replace. If $var_to_set is
+# either missing or NULL, the variable name is produced on standard out for
+# capturing in a sub-shell (which is less recommended due to performance
+# degradation).
+#
+str_replaceall()
+{
+	local __left="" __right="$1"
+	local __find="$2" __replace="$3" __var_to_set="$4"
+	while :; do
+		case "$__right" in *$__find*)
+			__left="$__left${__right%%$__find*}$__replace"
+			__right="${__right#*$__find}"
+			continue
+		esac
+		break
+	done
+	__left="$__left${__right#*$__find}"
+	if [ "$__var_to_set" ]; then
+		setvar "$__var_to_set" "$__left"
+	else
+		echo "$__left"
+	fi
+}
+
 # Builtin-only functions
 _BUILTIN_ONLY=""
 for _var in ${_BUILTIN_ONLY}; do
