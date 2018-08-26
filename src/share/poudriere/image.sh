@@ -400,7 +400,7 @@ touch ${WRKDIR}/src.conf
 [ ! -f ${POUDRIERED}/image-${JAILNAME}-${SETNAME}-src.conf ] || cat ${POUDRIERED}/image-${JAILNAME}-${SETNAME}-src.conf >> ${WRKDIR}/src.conf
 make -C ${mnt}/usr/src DESTDIR=${WRKDIR}/world BATCH_DELETE_OLD_FILES=yes SRCCONF=${WRKDIR}/src.conf delete-old delete-old-libs
 
-[ ! -d "${EXTRADIR}" ] || cp -fRLp ${EXTRADIR}/ ${WRKDIR}/world/
+[ ! -d "${EXTRADIR}" ] || cp -fRpP ${EXTRADIR}/ ${WRKDIR}/world/
 mv ${WRKDIR}/world/etc/login.conf.orig ${WRKDIR}/world/etc/login.conf
 cap_mkdb ${WRKDIR}/world/etc/login.conf
 
