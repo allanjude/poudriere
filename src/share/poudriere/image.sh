@@ -57,6 +57,7 @@ EOF
 delete_image() {
 	[ ! -f "${excludelist}" ] || rm -f ${excludelist}
 	[ -z "${zroot}" ] || zpool destroy -f ${zroot}
+	[ -z "${md}" ] || /sbin/mdconfig -d -u ${md#md}
 
 	destroyfs ${WRKDIR} image
 }
@@ -289,7 +290,7 @@ jail_exists ${JAILNAME} || err 1 "The jail ${JAILNAME} does not exist"
 _jget arch ${JAILNAME} arch
 get_host_arch host_arch
 case "${MEDIATYPE}" in
-usb|*firmware|rawdisk|embedded|zfssend*)
+usb|*firmware|*rawdisk|embedded|zfssend*)
 	[ -n "${IMAGESIZE}" ] || err 1 "Please specify the imagesize"
 	_jget mnt ${JAILNAME} mnt
 	test -f ${mnt}/boot/kernel/kernel || err 1 "The ${MEDIATYPE} media type requires a jail with a kernel"
@@ -550,6 +551,7 @@ usb)
 	;;
 zrawdisk)
 	cat >> ${WRKDIR}/world/boot/loader.conf <<-EOF
+	zfs_load="YES"
 	vfs.root.mountfrom="zfs:${zroot}/ROOT/default"
 	EOF
 	;;
