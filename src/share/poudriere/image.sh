@@ -318,7 +318,7 @@ cap_mkdb ${WRKDIR}/world/etc/login.conf
 
 # Set hostname
 if [ -n "${HOSTNAME}" ]; then
-	echo "hostname=${HOSTNAME}" >> ${WRKDIR}/world/etc/rc.conf
+	chroot ${WRKDIR}/world sh -c "echo \"hostname=${HOSTNAME}\" >> /etc/rc.conf"
 fi
 
 # install packages if any is needed
