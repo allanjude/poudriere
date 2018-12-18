@@ -46,7 +46,7 @@ Parameters:
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
-                       embedded, zfssend, zfssend+be
+                       embedded, zfssend[+be[+full]]
     -X excludefile  -- File containing the list in cpdup format
     -z set          -- Set
     -Z datasetfile  -- List of ZFS datasets to create
@@ -171,6 +171,15 @@ create_zfs_be_datasets() {
 	done
 }
 
+zfssend_writereplicationstream() {
+	# Arguments:
+	# $1: snapshot to recursively replicate
+	# $2: Image name to write replication stream to
+	msg "Creating replication stream"
+	zfs send ${ZFS_SEND_FLAGS} $1 > ${OUTPUTDIR}/$2 ||
+	    err 1 "Failed to save ZFS replication stream"
+}
+
 . ${SCRIPTPREFIX}/common.sh
 HOSTNAME=poudriere-image
 
@@ -222,7 +231,7 @@ while getopts "c:f:h:j:m:n:o:p:R:s:t:X:z:Z:" FLAG; do
 			case ${MEDIATYPE} in
 			iso|iso+mfs|iso+zmfs|usb|usb+mfs|usb+zmfs) ;;
 			rawdisk|zrawdisk|tar|firmware|rawfirmware) ;;
-			embedded|zfssend|zfssend+be) ;;
+			embedded|zfssend|zfssend+*) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
 			;;
@@ -683,25 +692,36 @@ zrawdisk)
 	mv ${WRKDIR}/raw.img ${OUTPUTDIR}/${FINALIMAGE}
 	;;
 zfssend*)
-	FINALIMAGE=${IMAGENAME}.zfs
+	FINALIMAGE=${IMAGENAME}.*.zfs
 	zpool set bootfs=${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME} ${zroot}
 	zpool set autoexpand=on ${zroot}
 	zfs set canmount=noauto ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}
 	SNAPSPEC="${zroot}@${IMAGENAME}"
-	case "${MEDIATYPE}" in
-	zfssend+be) SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}" ;;
-	esac
+
 	msg "Creating snapshot(s) for replication"
 	zfs snapshot -r $SNAPSPEC
-	msg "Creating replication stream"
-	zfs send ${ZFS_SEND_FLAGS} $SNAPSPEC > ${OUTPUTDIR}/${FINALIMAGE} ||
-	    err 1 "Failed to save ZFS replication stream"
+	## Call function to export replication stream here.
+	## Test if we should create +full or +be, but in a way
+	## which lets us perform both.
+	case "${MEDIATYPE}" in
+	zfssend|*+full*)
+		zfssend_writereplicationstream "${SNAPSPEC}" "${IMAGENAME}.full.zfs"
+	;;
+	esac
+	case "${MEDIATYPE}" in
+	*+be*)
+		SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}"
+		zfssend_writereplicationstream "${SNAPSPEC}" "${IMAGENAME}.be.zfs"
+	;;
+	esac
+
 	zpool export ${zroot}
 	zroot=
 	/sbin/mdconfig -d -u ${md#md}
 	md=
 	;;
 esac
+
 
 CLEANUP_HOOK=delete_image
 msg "Image available at: ${OUTPUTDIR}/${FINALIMAGE}"

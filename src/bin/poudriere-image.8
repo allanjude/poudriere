@@ -89,6 +89,14 @@ filesystem is LZ77 compressed and is MFS mounted.
 A raw UFS2, softupdates-enabled, disk image.
 .It zrawdisk
 A raw ZFS disk image.
+.It zfssend
+A ZFS replication stream.
+Defaults to zfssend+be.
+You may specify multiple streams by specifying multiple options (example: zfssend+full+be).
+.It zfssend+be
+Creates a ZFS replication stream of the boot environment.
+.It zfssend+full
+Creates a ZFS replication stream of the while pool, including the boot environment.
 .It tar
 An XZ-compressed tarball.
 .It firmware
