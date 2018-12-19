@@ -201,8 +201,11 @@ zfssend_writereplicationstream() {
 	    err 1 "Failed to save ZFS replication stream"
 }
 
+setimagehostname() {
+	chroot ${WRKDIR}/world sh -c "echo \"hostname=${1}\" >> /etc/rc.conf"
+}
+
 . ${SCRIPTPREFIX}/common.sh
-HOSTNAME=poudriere-image
 
 while getopts "c:f:h:i:j:m:n:o:p:R:s:S:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
@@ -510,9 +513,16 @@ if [ -f "${WRKDIR}/world/etc/login.conf.orig" ]; then
 fi
 cap_mkdb ${WRKDIR}/world/etc/login.conf
 
-# Set hostname
+# Always set hostname if it was specified on command line
 if [ -n "${HOSTNAME}" ]; then
-	chroot ${WRKDIR}/world sh -c "echo \"hostname=${HOSTNAME}\" >> /etc/rc.conf"
+	setimagehostname "${HOSTNAME}"	
+else
+	# If hostname wasn't set on command line, only set
+	# default hostname if hostname isn't specified by
+	# overlay file strucutre.
+	if ! sysrc -n -R "${WRKDIR}/world" hostname; then
+		setimagehostname "poudriere-image"
+	fi
 fi
 
 # Convert @flavor from package list to a unique entry of pkgname, otherwise it
