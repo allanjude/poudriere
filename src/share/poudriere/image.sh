@@ -180,8 +180,11 @@ zfssend_writereplicationstream() {
 	    err 1 "Failed to save ZFS replication stream"
 }
 
+setimagehostname() {
+	chroot ${WRKDIR}/world sh -c "echo \"hostname=${1}\" >> /etc/rc.conf"
+}
+
 . ${SCRIPTPREFIX}/common.sh
-HOSTNAME=poudriere-image
 
 while getopts "c:f:h:j:m:n:o:p:R:s:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
@@ -448,9 +451,16 @@ make -C ${mnt}/usr/src DESTDIR=${WRKDIR}/world BATCH_DELETE_OLD_FILES=yes SRCCON
 mv ${WRKDIR}/world/etc/login.conf.orig ${WRKDIR}/world/etc/login.conf
 cap_mkdb ${WRKDIR}/world/etc/login.conf
 
-# Set hostname
+# Always set hostname if it was specified on command line
 if [ -n "${HOSTNAME}" ]; then
-	chroot ${WRKDIR}/world sh -c "echo \"hostname=${HOSTNAME}\" >> /etc/rc.conf"
+	setimagehostname "${HOSTNAME}"	
+else
+	# If hostname wasn't set on command line, only set
+	# default hostname if hostname isn't specified by
+	# overlay file strucutre.
+	if ! sysrc -n -R "${WRKDIR}/world" hostname; then
+		setimagehostname "poudriere-image"
+	fi
 fi
 
 # install packages if any is needed
