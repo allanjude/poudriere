@@ -42,6 +42,7 @@ Parameters:
     -n imagename    -- The name of the generated image
     -o outputdir    -- Image destination directory
     -p portstree    -- Ports tree
+	-P pkgreponame  -- Name of package repository to use instead of local/default.
     -R flags        -- ZFS Replication Flags
     -s size         -- Set the image size
     -S snapshotname -- Snapshot name
@@ -207,7 +208,7 @@ setimagehostname() {
 
 . ${SCRIPTPREFIX}/common.sh
 
-while getopts "c:f:h:i:j:m:n:o:p:R:s:S:t:X:z:Z:" FLAG; do
+while getopts "c:f:h:i:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -246,6 +247,9 @@ while getopts "c:f:h:i:j:m:n:o:p:R:s:S:t:X:z:Z:" FLAG; do
 			;;
 		p)
 			PTNAME=${OPTARG}
+			;;
+		P)
+			PKGREPONAME="${OPTARG}"
 			;;
 		R)
 			ZFS_SEND_FLAGS="-${OPTARG}"
@@ -552,6 +556,7 @@ convert_package_list() {
 
 # install packages if any is needed
 if [ -n "${PACKAGELIST}" ]; then
+installpackages_localmirror() {
 	mkdir -p ${WRKDIR}/world/tmp/packages
 	${NULLMOUNT} ${POUDRIERE_DATA}/packages/${MASTERNAME} ${WRKDIR}/world/tmp/packages
 	if [ "${arch}" == "${host_arch}" ]; then
@@ -583,6 +588,29 @@ if [ -n "${PACKAGELIST}" ]; then
 	umount ${WRKDIR}/world/tmp/packages
 	rmdir ${WRKDIR}/world/tmp/packages
 	rm ${WRKDIR}/world/var/db/pkg/repo-* 2>/dev/null || :
+}
+
+installpackages_customrepo() {
+	PKGENV="env ASSUME_ALWAYS_YES=yes SYSLOG=no"
+	if [ "${arch}" != "${host_arch}" ]; then
+		PKGENV="${PKGENV} ABI=${arch} ABI_FILE=${WRKDIR}/world/usr/lib/crt1.o"
+	fi
+	echo "PKGENV: ${PKGENV}"
+	${PKGENV} pkg -r "${WRKDIR}/world/" install pkg
+	cat ${PACKAGELIST} | xargs ${PKGENV} pkg -r "${WRKDIR}/world/" install
+	convert_package_list "${PACKAGELIST}" | \
+	    xargs ${PKGENV} pkg -r "${WRKDIR}/world" \
+	    pkg install
+}
+
+# install packages if any is needed
+echo "Reponame: ${PKGREPONAME}"
+if [ -n "${PACKAGELIST}" ]; then
+	if [ -n "${PKGREPONAME}" ]; then
+		installpackages_customrepo
+	else
+		installpackages_localmirror
+	fi
 fi
 
 case ${MEDIATYPE} in
