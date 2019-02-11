@@ -46,6 +46,7 @@ Parameters:
     -R flags        -- ZFS Replication Flags
     -s size         -- Set the image size
     -S snapshotname -- Snapshot name
+    -Y script       -- Path to script which will be sourced before exporting image
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
@@ -208,7 +209,9 @@ setimagehostname() {
 
 . ${SCRIPTPREFIX}/common.sh
 
-while getopts "c:f:h:i:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
+PRE_EXPORT_SCRIPT=""
+
+while getopts "c:f:h:i:j:m:n:o:p:P:R:s:S:t:X:Y:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -268,6 +271,10 @@ while getopts "c:f:h:i:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
 			embedded|dump|zfssend|zfssend+*) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
+			;;
+		Y)
+			[ -f "${OPTARG}" ] || err 1 "No such pre-export-script: ${OPTARG}"
+			PRE_EXPORT_SCRIPT="${OPTARG}"
 			;;
 		X)
 			[ -r "${OPTARG}" ] || err 1 "No such exclude list ${OPTARG}"
@@ -750,6 +757,11 @@ zsnapshot)
 	cpdup -i0 ${WRKDIR}/world ${WRKDIR}/mnt
 	;;
 esac
+
+if [ -f "${PRE_EXPORT_SCRIPT}" ]; then
+	# Source the pre-export-script.
+	. ${PRE_EXPORT_SCRIPT}
+fi
 
 case ${MEDIATYPE} in
 iso)
