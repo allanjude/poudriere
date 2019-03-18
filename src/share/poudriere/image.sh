@@ -44,6 +44,7 @@ Parameters:
 	-P pkgreponame  -- Name of package repository to use instead of local/default.
     -R flags        -- ZFS Replication Flags
     -s size         -- Set the image size
+    -S script       -- Path to script which will be sourced before exporting image
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
@@ -187,7 +188,9 @@ setimagehostname() {
 
 . ${SCRIPTPREFIX}/common.sh
 
-while getopts "c:f:h:j:m:n:o:p:P:R:s:t:X:z:Z:" FLAG; do
+PRE_EXPORT_SCRIPT=""
+
+while getopts "c:f:h:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -232,6 +235,10 @@ while getopts "c:f:h:j:m:n:o:p:P:R:s:t:X:z:Z:" FLAG; do
 			;;
 		s)
 			IMAGESIZE="${OPTARG}"
+			;;
+		S)
+			[ -f "${OPTARG}" ] || err 1 "No such pre-export-script: ${OPTARG}"
+			PRE_EXPORT_SCRIPT=$(realpath ${OPTARG})
 			;;
 		t)
 			MEDIATYPE=${OPTARG}
@@ -641,6 +648,11 @@ tar)
 	fi
 	;;
 esac
+
+if [ -f "${PRE_EXPORT_SCRIPT}" ]; then
+	# Source the pre-export-script.
+	. ${PRE_EXPORT_SCRIPT}
+fi
 
 case ${MEDIATYPE} in
 iso)
