@@ -41,12 +41,14 @@ Parameters:
     -n imagename    -- The name of the generated image
     -o outputdir    -- Image destination directory
     -p portstree    -- Ports tree
+	-P pkgreponame  -- Name of package repository to use instead of local/default.
     -R flags        -- ZFS Replication Flags
     -s size         -- Set the image size
+    -S script       -- Path to script which will be sourced before exporting image
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
-                       embedded, zfssend, zfssend+be
+                       embedded, zfssend[+be[+full]]
     -X excludefile  -- File containing the list in cpdup format
     -z set          -- Set
     -Z datasetfile  -- List of ZFS datasets to create
@@ -171,10 +173,24 @@ create_zfs_be_datasets() {
 	done
 }
 
-. ${SCRIPTPREFIX}/common.sh
-HOSTNAME=poudriere-image
+zfssend_writereplicationstream() {
+	# Arguments:
+	# $1: snapshot to recursively replicate
+	# $2: Image name to write replication stream to
+	msg "Creating replication stream"
+	zfs send ${ZFS_SEND_FLAGS} $1 > ${OUTPUTDIR}/$2 ||
+	    err 1 "Failed to save ZFS replication stream"
+}
 
-while getopts "c:f:h:j:m:n:o:p:R:s:t:X:z:Z:" FLAG; do
+setimagehostname() {
+	chroot ${WRKDIR}/world sh -c "echo \"hostname=${1}\" >> /etc/rc.conf"
+}
+
+. ${SCRIPTPREFIX}/common.sh
+
+PRE_EXPORT_SCRIPT=""
+
+while getopts "c:f:h:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
@@ -211,18 +227,25 @@ while getopts "c:f:h:j:m:n:o:p:R:s:t:X:z:Z:" FLAG; do
 		p)
 			PTNAME=${OPTARG}
 			;;
+		P)
+			PKGREPONAME="${OPTARG}"
+			;;
 		R)
 			ZFS_SEND_FLAGS="-${OPTARG}"
 			;;
 		s)
 			IMAGESIZE="${OPTARG}"
 			;;
+		S)
+			[ -f "${OPTARG}" ] || err 1 "No such pre-export-script: ${OPTARG}"
+			PRE_EXPORT_SCRIPT=$(realpath ${OPTARG})
+			;;
 		t)
 			MEDIATYPE=${OPTARG}
 			case ${MEDIATYPE} in
 			iso|iso+mfs|iso+zmfs|usb|usb+mfs|usb+zmfs) ;;
 			rawdisk|zrawdisk|tar|firmware|rawfirmware) ;;
-			embedded|zfssend|zfssend+be) ;;
+			embedded|zfssend|zfssend+*) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
 			;;
@@ -439,13 +462,19 @@ make -C ${mnt}/usr/src DESTDIR=${WRKDIR}/world BATCH_DELETE_OLD_FILES=yes SRCCON
 mv ${WRKDIR}/world/etc/login.conf.orig ${WRKDIR}/world/etc/login.conf
 cap_mkdb ${WRKDIR}/world/etc/login.conf
 
-# Set hostname
+# Always set hostname if it was specified on command line
 if [ -n "${HOSTNAME}" ]; then
-	chroot ${WRKDIR}/world sh -c "echo \"hostname=${HOSTNAME}\" >> /etc/rc.conf"
+	setimagehostname "${HOSTNAME}"	
+else
+	# If hostname wasn't set on command line, only set
+	# default hostname if hostname isn't specified by
+	# overlay file strucutre.
+	if ! sysrc -n -R "${WRKDIR}/world" hostname; then
+		setimagehostname "poudriere-image"
+	fi
 fi
 
-# install packages if any is needed
-if [ -n "${PACKAGELIST}" ]; then
+installpackages_localmirror() {
 	mkdir -p ${WRKDIR}/world/tmp/packages
 	${NULLMOUNT} ${POUDRIERE_DATA}/packages/${MASTERNAME} ${WRKDIR}/world/tmp/packages
 	if [ "${arch}" == "${host_arch}" ]; then
@@ -466,6 +495,26 @@ if [ -n "${PACKAGELIST}" ]; then
 	umount ${WRKDIR}/world/tmp/packages
 	rmdir ${WRKDIR}/world/tmp/packages
 	rm ${WRKDIR}/world/var/db/pkg/repo-*
+}
+
+installpackages_customrepo() {
+	PKGENV="env ASSUME_ALWAYS_YES=yes SYSLOG=no"
+	if [ "${arch}" != "${host_arch}" ]; then
+		PKGENV="${PKGENV} ABI=${arch} ABI_FILE=${WRKDIR}/world/usr/lib/crt1.o"
+	fi
+	echo "PKGENV: ${PKGENV}"
+	${PKGENV} pkg -r "${WRKDIR}/world/" install pkg
+	cat ${PACKAGELIST} | xargs ${PKGENV} pkg -r "${WRKDIR}/world/" install
+}
+
+# install packages if any is needed
+echo "Reponame: ${PKGREPONAME}"
+if [ -n "${PACKAGELIST}" ]; then
+	if [ -n "${PKGREPONAME}" ]; then
+		installpackages_customrepo
+	else
+		installpackages_localmirror
+	fi
 fi
 
 case ${MEDIATYPE} in
@@ -600,6 +649,11 @@ tar)
 	;;
 esac
 
+if [ -f "${PRE_EXPORT_SCRIPT}" ]; then
+	# Source the pre-export-script.
+	. ${PRE_EXPORT_SCRIPT}
+fi
+
 case ${MEDIATYPE} in
 iso)
 	FINALIMAGE=${IMAGENAME}.iso
@@ -683,25 +737,36 @@ zrawdisk)
 	mv ${WRKDIR}/raw.img ${OUTPUTDIR}/${FINALIMAGE}
 	;;
 zfssend*)
-	FINALIMAGE=${IMAGENAME}.zfs
+	FINALIMAGE=${IMAGENAME}.*.zfs
 	zpool set bootfs=${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME} ${zroot}
 	zpool set autoexpand=on ${zroot}
 	zfs set canmount=noauto ${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}
 	SNAPSPEC="${zroot}@${IMAGENAME}"
-	case "${MEDIATYPE}" in
-	zfssend+be) SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}" ;;
-	esac
+
 	msg "Creating snapshot(s) for replication"
 	zfs snapshot -r $SNAPSPEC
-	msg "Creating replication stream"
-	zfs send ${ZFS_SEND_FLAGS} $SNAPSPEC > ${OUTPUTDIR}/${FINALIMAGE} ||
-	    err 1 "Failed to save ZFS replication stream"
+	## Call function to export replication stream here.
+	## Test if we should create +full or +be, but in a way
+	## which lets us perform both.
+	case "${MEDIATYPE}" in
+	zfssend|*+full*)
+		zfssend_writereplicationstream "${SNAPSPEC}" "${IMAGENAME}.full.zfs"
+	;;
+	esac
+	case "${MEDIATYPE}" in
+	*+be*)
+		SNAPSPEC="${zroot}/${ZFS_BEROOT_NAME}/${ZFS_BOOTFS_NAME}@${IMAGENAME}"
+		zfssend_writereplicationstream "${SNAPSPEC}" "${IMAGENAME}.be.zfs"
+	;;
+	esac
+
 	zpool export ${zroot}
 	zroot=
 	/sbin/mdconfig -d -u ${md#md}
 	md=
 	;;
 esac
+
 
 CLEANUP_HOOK=delete_image
 msg "Image available at: ${OUTPUTDIR}/${FINALIMAGE}"
