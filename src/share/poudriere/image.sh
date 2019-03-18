@@ -238,7 +238,7 @@ while getopts "c:f:h:j:m:n:o:p:P:R:s:S:t:X:z:Z:" FLAG; do
 			;;
 		S)
 			[ -f "${OPTARG}" ] || err 1 "No such pre-export-script: ${OPTARG}"
-			PRE_EXPORT_SCRIPT="${OPTARG}"
+			PRE_EXPORT_SCRIPT=$(realpath ${OPTARG})
 			;;
 		t)
 			MEDIATYPE=${OPTARG}
