@@ -609,15 +609,19 @@ iso)
 	FINALIMAGE=${IMAGENAME}.iso
 	makefs -t cd9660 -o rockridge -o label=${IMAGENAME} \
 		-o publisher="poudriere" \
-		-o bootimage="i386;${WRKDIR}/out/boot/cdboot" \
-		-o no-emul-boot ${OUTPUTDIR}/${FINALIMAGE} ${WRKDIR}/world
+		-o bootimage="i386;${WRKDIR}/out/boot/cdboot" -o no-emul-boot \
+		-o bootimage="i386;${WRKDIR}/out/boot/boot1.efifat" \
+		-o no-emul-boot -o platformid=efi \
+		${OUTPUTDIR}/${FINALIMAGE} ${WRKDIR}/world
 	;;
 iso+*mfs)
 	FINALIMAGE=${IMAGENAME}.iso
 	makefs -t cd9660 -o rockridge -o label=${IMAGENAME} \
 		-o publisher="poudriere" \
-		-o bootimage="i386;${WRKDIR}/out/boot/cdboot" \
-		-o no-emul-boot ${OUTPUTDIR}/${FINALIMAGE} ${WRKDIR}/out
+		-o bootimage="i386;${WRKDIR}/out/boot/cdboot" -o no-emul-boot \
+		-o bootimage="i386;${WRKDIR}/out/boot/boot1.efifat" \
+		-o no-emul-boot -o platformid=efi \
+		${OUTPUTDIR}/${FINALIMAGE} ${WRKDIR}/out
 	;;
 usb+*mfs)
 	FINALIMAGE=${IMAGENAME}.img
