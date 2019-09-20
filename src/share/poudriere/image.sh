@@ -3,6 +3,7 @@
 # Copyright (c) 2015 Baptiste Daroussin <bapt@FreeBSD.org>
 # All rights reserved.
 # Copyright (c) 2018 Allan Jude <allanjude@FreeBSD.org>
+# Copyright (c) 2019 Marie Helene Kvello-Aune <freebsd@mhka.no>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
