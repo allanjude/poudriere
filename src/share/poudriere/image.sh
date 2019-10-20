@@ -597,16 +597,15 @@ installpackages_localmirror() {
 }
 
 installpackages_customrepo() {
-	PKGENV="env ASSUME_ALWAYS_YES=yes SYSLOG=no"
+	export ASSUME_ALWAYS_YES=yes SYSLOG=no
 	if [ "${arch}" != "${host_arch}" ]; then
-		PKGENV="${PKGENV} ABI=${arch} ABI_FILE=${WRKDIR}/world/usr/lib/crt1.o"
+		export ABI="${arch}" ABI_FILE="${WRKDIR}/world/usr/lib/crt1.o"
 	fi
-	echo "PKGENV: ${PKGENV}"
-	${PKGENV} pkg -r "${WRKDIR}/world/" install pkg
-	cat ${PACKAGELIST} | xargs ${PKGENV} pkg -r "${WRKDIR}/world/" install
-	convert_package_list "${PACKAGELIST}" | \
-	    xargs ${PKGENV} pkg -r "${WRKDIR}/world" \
-	    pkg install
+	pkg -c "${WRKDIR}/world/" install pkg
+
+	echo "" | awk -v pkglist="${PACKAGELIST}" \
+	    -f "${AWKPREFIX}/unique_pkgnames_from_flavored_origins.awk" | \
+	    xargs pkg -c "${WRKDIR}/world" install
 }
 
 # install packages if any is needed
