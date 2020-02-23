@@ -32,6 +32,7 @@ poudriere image [parameters] [options]
 Parameters:
     -c overlaydir   -- The content of the overlay directory will be copied into
                        the image
+    -C cloudscript  -- Run this cloud script
     -f packagelist  -- List of packages to install
     -h hostname     -- The image hostname
     -i originimage  -- Origin image name
@@ -46,7 +47,7 @@ Parameters:
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
-                       embedded, dump, zsnapshot, ami, zami
+                       embedded, dump, zsnapshot, cloud, zcloud
     -X excludefile  -- File containing the list in cpdup format
     -z set          -- Set
 EOF
@@ -174,11 +175,19 @@ make_esp_file() {
 . ${SCRIPTPREFIX}/common.sh
 HOSTNAME=poudriere-image
 
-while getopts "c:f:h:i:j:m:n:o:p:s:S:t:X:z:" FLAG; do
+while getopts "c:C:f:h:i:j:m:n:o:p:s:S:t:X:z:" FLAG; do
 	case "${FLAG}" in
 		c)
 			[ -d "${OPTARG}" ] || err 1 "No such extract directory: ${OPTARG}"
 			EXTRADIR=$(realpath ${OPTARG})
+			;;
+		C)
+			# If this is a relative path, add in ${PWD} as
+			# a cd / was done.
+			[ "${OPTARG#/}" = "${OPTARG}" ] && \
+			    OPTARG="${SAVED_PWD}/${OPTARG}"
+			[ -r "${OPTARG}" ] || err 1 "No such package list: ${OPTARG}"
+			CLOUDSCRIPT=${OPTARG}
 			;;
 		f)
 			# If this is a relative path, add in ${PWD} as
@@ -225,7 +234,7 @@ while getopts "c:f:h:i:j:m:n:o:p:s:S:t:X:z:" FLAG; do
 			case ${MEDIATYPE} in
 			iso|iso+mfs|iso+zmfs|usb|usb+mfs|usb+zmfs) ;;
 			rawdisk|zrawdisk|tar|firmware|rawfirmware) ;;
-			embedded|dump|zsnapshot|ami|zami) ;;
+			embedded|dump|zsnapshot|cloud|zcloud) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
 			;;
@@ -286,7 +295,7 @@ jail_exists ${JAILNAME} || err 1 "The jail ${JAILNAME} does not exist"
 _jget arch ${JAILNAME} arch || err 1 "Missing arch metadata for jail"
 get_host_arch host_arch
 case "${MEDIATYPE}" in
-usb|*firmware|*rawdisk|embedded|dump|ami|zami)
+usb|*firmware|*rawdisk|embedded|dump|cloud|zcloud)
 	[ -n "${IMAGESIZE}" ] || err 1 "Please specify the imagesize"
 	_jget mnt ${JAILNAME} mnt || err 1 "Missing mnt metadata for jail"
 	[ -f "${mnt}/boot/kernel/kernel" ] || \
@@ -374,7 +383,7 @@ rawdisk|dump)
 	newfs -j -L ${IMAGENAME} /dev/${md}
 	mount /dev/${md} ${WRKDIR}/world
 	;;
-zami)
+zcloud)
 	truncate -s ${IMAGESIZE} ${WRKDIR}/raw.img
 	md=$(/sbin/mdconfig ${WRKDIR}/raw.img)
 	zroot=${IMAGENAME}root
@@ -540,7 +549,7 @@ if [ -n "${PACKAGELIST}" ]; then
 fi
 
 case "${MEDIATYPE}" in
-ami|zami)
+cloud|zcloud)
 	DESTDIR="${WRKDIR}/world"
 	TARGET_ARCH="${arch}"
 
@@ -552,7 +561,9 @@ ami|zami)
 	eval chroot ${DESTDIR} /etc/rc.d/ldconfig forcerestart
 
 	# Give release(7) a chance to overload vm_extra_pre_umount.
-	if [ -e ${mnt}/usr/src/release/tools/ec2.conf ]; then
+	if [ -n "${CLOUDSCRIPT}" ]; then
+		. ${CLOUDSCRIPT}
+	elif [ -e ${mnt}/usr/src/release/tools/ec2.conf ]; then
 		. ${mnt}/usr/src/release/tools/ec2.conf
 	else
 		. ${SCRIPTPREFIX}/ec2.sh
@@ -618,7 +629,7 @@ embedded)
 	/dev/msdosfs/MSDOSBOOT /boot/msdos msdosfs rw,noatime 0 0
 	EOF
 	;;
-usb|ami)
+usb|cloud)
 	cat >> ${WRKDIR}/world/etc/fstab <<-EOF
 	/dev/ufs/${IMAGENAME} / ufs rw 1 1
 	EOF
@@ -689,13 +700,12 @@ usb|ami)
 	makefs -B little -s ${OS_SIZE}m -o label=${IMAGENAME} \
 		-o version=2 ${WRKDIR}/raw.img ${WRKDIR}/world
 	;;
-zrawdisk|zami)
+zrawdisk|zcloud)
 	cat >> ${WRKDIR}/world/etc/fstab <<-EOF
 	# Device	Mountpoint	FStype	Options	Dump	Pass#
 	EOF
 	cat >> ${WRKDIR}/world/boot/loader.conf <<-EOF
-	zfs_load="YES"
-	vfs.root.mountfrom="zfs:${zroot}/ROOT/default"
+	openzfs_load="YES"
 	EOF
 	;;
 tar)
@@ -741,7 +751,7 @@ usb+*mfs)
 		-p freebsd-ufs:=${WRKDIR}/img.part \
 		-o ${OUTPUTDIR}/${FINALIMAGE}
 	;;
-usb|ami)
+usb|cloud)
 	FINALIMAGE=${IMAGENAME}.img
 	mkimg -s gpt -b ${mnt}/boot/pmbr \
 		-p freebsd-boot:=${mnt}/boot/gptboot \
@@ -791,7 +801,7 @@ embedded)
 	md=
 	mv ${WRKDIR}/raw.img ${OUTPUTDIR}/${FINALIMAGE}
 	;;
-zami)
+zcloud)
 	FINALIMAGE=${IMAGENAME}.img
 	zfs umount -f ${zroot}/ROOT/default
 	zfs set mountpoint=none ${zroot}/ROOT/default
